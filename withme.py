@@ -1,0 +1,131 @@
+# coding: utf-8
+import pandas as pd
+import requests
+import openpyxl
+
+import json
+#from pandas.io.json import json_normalize
+from datetime import datetime, timezone, timedelta
+
+'''
+#Excel強制終了(公開時はコメントアウトすること)
+import psutil
+import os
+
+def kill_excel_processes():
+    for proc in psutil.process_iter(['pid', 'name']):
+        try:
+            # Excelプロセスを検出
+            if 'EXCEL.EXE' in proc.info['name']:
+                print(f"Killing Excel process with PID {proc.info['pid']}")
+                # プロセスを終了する
+                psutil.Process(proc.info['pid']).terminate()
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            pass
+
+if __name__ == "__main__":
+    try:
+        # Excelプロセスを強制終了
+        kill_excel_processes()
+    except Exception as e:
+        print(f"Error: {e}")
+    finally:
+        # 念のため残っているExcelプロセスがあれば終了
+        os.system("taskkill /f /im EXCEL.EXE")
+
+'''
+    
+# APIキー
+api_key = "sekai1kawaiiyo!"
+
+# エンドポイント
+endpoint = "https://navitime-route-totalnavi.p.rapidapi.com/route_transit"
+#endpoint = "https://navitime-route-totalnavi.p.rapidapi.com/route"
+
+# Excelファイルのパス
+excel_path = "C:\\yukari\\withme.xlsx"
+
+
+# ヘッダー
+headers = {
+    'X-RapidAPI-Host': 'navitime-route-totalnavi.p.rapidapi.com',
+    'X-RapidAPI-Key': 'sekai1kawaiiyo!'
+}
+
+# Excelファイル読み込み
+df = pd.read_excel(excel_path)
+
+
+# データの取得と処理
+for index, row in df.iterrows():
+    # 出発地
+    start_location = row['出発駅_緯度経度']
+    if isinstance(start_location, str):
+        start_latitude, start_longitude = map(float, start_location.split(','))
+    else:
+        start_latitude, start_longitude = float(start_location), float(row['出発駅_緯度経度'])
+
+    # 到着地
+    goal_location = row['到着駅_緯度経度']
+    if isinstance(goal_location, str):
+        goal_latitude, goal_longitude = map(float, goal_location.split(','))
+    else:
+        goal_latitude, goal_longitude = float(goal_location), float(row['到着駅_緯度経度'])
+        
+    # 出発時間のフォーマット
+    departure_time_str = row['駅出発時間']
+
+    # パラメーター
+    params = {
+        'start': f"{start_latitude},{start_longitude}",
+        'goal': f"{goal_latitude},{goal_longitude}",
+        'start_time': str(departure_time_str),
+        'datum': 'wgs84',
+        'term': 1440,
+        'limit': 5,
+        'unuse': 'domestic_flight',
+        'coord_unit': 'degree'
+    }
+
+    # APIリクエスト
+    response = requests.get(endpoint, headers=headers, params=params)
+
+    # 正常なレスポンスか確認
+    if response.status_code == 200:
+        data = response.json()
+
+        print(data['items'][0]['summary']['move']['to_time'])
+        print(response.status_code)
+
+        # 到着時間があるかどうかを確認
+        if 'items' in data and data['items']:
+            to_time_str = data['items'][0]['summary']['move']['to_time']
+
+            # to_time_strが文字列であることを確認してから変換
+            if isinstance(to_time_str, str):
+                # タイムゾーン情報を考慮したdatetimeオブジェクトに変換
+                to_time = datetime.fromisoformat(to_time_str)
+
+                # 出発時間をUTCに変換
+                departure_time_utc = datetime.fromisoformat(departure_time_str)
+
+                # UTCでの到着時間と出発時間の日付を比較
+                if to_time.replace(tzinfo=None).date() == departure_time_utc.replace(tzinfo=None).date():
+                    df.at[index, '判定'] = '♡'
+                else:
+                    df.at[index, '判定'] = '×'
+
+                df.at[index, '到着時間'] = to_time_str
+            else:
+                df.at[index, '到着時間'] = None
+                df.at[index, '判定'] = 'データなし'
+        else:
+            df.at[index, '到着時間'] = None
+            df.at[index, '判定'] = 'データなし'
+    else:
+        print(response.json())
+        df.at[index, '到着時間'] = None
+        df.at[index, '判定'] = f'エラー: {response.status_code}'
+
+# Excelに書き込み
+df.to_excel(excel_path, index=False)
